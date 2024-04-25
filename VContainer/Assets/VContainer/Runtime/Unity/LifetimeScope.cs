@@ -56,6 +56,8 @@ namespace VContainer.Unity
         [SerializeField]
         protected List<GameObject> autoInjectGameObjects;
 
+        string scopeName;
+
         static readonly Stack<LifetimeScope> GlobalOverrideParents = new Stack<LifetimeScope>();
         static readonly Stack<IInstaller> GlobalExtraInstallers = new Stack<IInstaller>();
         static readonly object SyncRoot = new object();
@@ -112,17 +114,27 @@ namespace VContainer.Unity
 
         static LifetimeScope Find(Type type)
         {
-           return (LifetimeScope)FindObjectOfType(type);
+#if UNITY_2020_4_OR_NEWER || UNITY_2021_4_OR_NEWER || UNITY_2022_3_OR_NEWER || UNITY_2023_1_OR_NEWER
+            return (LifetimeScope)FindAnyObjectByType(type);
+#else
+            return (LifetimeScope)FindObjectOfType(type);
+#endif
         }
 
         public IObjectResolver Container { get; private set; }
         public LifetimeScope Parent { get; private set; }
-        public bool IsRoot { get; set; }
+
+        public bool IsRoot => VContainerSettings.Instance != null &&
+                              VContainerSettings.Instance.IsRootLifetimeScopeInstance(this);
 
         readonly List<IInstaller> localExtraInstallers = new List<IInstaller>();
 
         protected virtual void Awake()
         {
+            if (VContainerSettings.DiagnosticsEnabled && string.IsNullOrEmpty(scopeName))
+            {
+                scopeName = $"{name} ({gameObject.GetInstanceID()})";
+            }
             try
             {
                 Parent = GetRuntimeParent();
@@ -162,6 +174,10 @@ namespace VContainer.Unity
             Container?.Dispose();
             Container = null;
             CancelAwake(this);
+            if (VContainerSettings.DiagnosticsEnabled)
+            {
+                DiagnositcsContext.RemoveCollector(scopeName);
+            }
         }
 
         public void Build()
@@ -171,7 +187,7 @@ namespace VContainer.Unity
 
             if (Parent != null)
             {
-                if (VContainerSettings.Instance != null && Parent == VContainerSettings.Instance.RootLifetimeScope)
+                if (VContainerSettings.Instance != null && Parent.IsRoot)
                 {
                     if (Parent.Container == null)
                         Parent.Build();
@@ -182,7 +198,7 @@ namespace VContainer.Unity
                 {
                     builder.RegisterBuildCallback(SetContainer);
                     builder.ApplicationOrigin = this;
-                    builder.Diagnostics = VContainerSettings.DiagnosticsEnabled ? DiagnositcsContext.GetCollector(name) : null;
+                    builder.Diagnostics = VContainerSettings.DiagnosticsEnabled ? DiagnositcsContext.GetCollector(scopeName) : null;
                     InstallTo(builder);
                 });
             }
@@ -191,13 +207,13 @@ namespace VContainer.Unity
                 var builder = new ContainerBuilder
                 {
                     ApplicationOrigin = this,
-                    Diagnostics = VContainerSettings.DiagnosticsEnabled ? DiagnositcsContext.GetCollector(name) : null,
+                    Diagnostics = VContainerSettings.DiagnosticsEnabled ? DiagnositcsContext.GetCollector(scopeName) : null,
                 };
                 builder.RegisterBuildCallback(SetContainer);
                 InstallTo(builder);
                 builder.Build();
             }
-            
+
             AwakeWaitingChildren(this);
         }
 
@@ -318,7 +334,9 @@ namespace VContainer.Unity
 
             // Find root from settings
             if (VContainerSettings.Instance != null)
-                return VContainerSettings.Instance.RootLifetimeScope;
+            {
+                return VContainerSettings.Instance.GetOrCreateRootLifetimeScopeInstance();
+            }
 
             return null;
         }
