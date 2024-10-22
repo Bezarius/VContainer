@@ -1,4 +1,5 @@
 using UnityEngine;
+using VContainer.Internal;
 
 namespace VContainer.Unity
 {
@@ -10,7 +11,7 @@ namespace VContainer.Unity
             {
                 if (current == null) return;
 
-                using (UnityEngineObjectListBuffer<MonoBehaviour>.Get(out var buffer))
+                using (ListPool<MonoBehaviour>.Get(out var buffer))
                 {
                     buffer.Clear();
                     current.GetComponents(buffer);
@@ -183,14 +184,18 @@ namespace VContainer.Unity
             var wasActive = prefab.activeSelf;
             prefab.SetActive(false);
 
-            var instance = UnityEngine.Object.Instantiate(prefab, parent, worldPositionStays);
-            SetName(instance, prefab);
-
-            resolver.InjectGameObject(instance);
-
-            prefab.SetActive(wasActive);
-            instance.SetActive(wasActive);
-
+            GameObject instance = null;
+            try
+            {
+                instance = UnityEngine.Object.Instantiate(prefab, parent, worldPositionStays);
+                SetName(instance, prefab);
+                resolver.InjectGameObject(instance);
+            }
+            finally
+            {
+                prefab.SetActive(wasActive);
+                instance?.SetActive(wasActive);    
+            }
             return instance;
         }
 

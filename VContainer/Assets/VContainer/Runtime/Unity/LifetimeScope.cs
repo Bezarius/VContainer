@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using VContainer.Diagnostics;
+using VContainer.Internal;
 
 namespace VContainer.Unity
 {
@@ -101,20 +102,22 @@ namespace VContainer.Unity
 
         static LifetimeScope Find(Type type, Scene scene)
         {
-            var buffer = UnityEngineObjectListBuffer<GameObject>.Get();
-            scene.GetRootGameObjects(buffer);
-            foreach (var gameObject in buffer)
+            using (ListPool<GameObject>.Get(out var buffer))
             {
-                var found = gameObject.GetComponentInChildren(type) as LifetimeScope;
-                if (found != null)
-                    return found;
+                scene.GetRootGameObjects(buffer);
+                foreach (var gameObject in buffer)
+                {
+                    var found = gameObject.GetComponentInChildren(type) as LifetimeScope;
+                    if (found != null)
+                        return found;
+                }
             }
             return null;
         }
 
         static LifetimeScope Find(Type type)
         {
-#if UNITY_2020_4_OR_NEWER || UNITY_2021_4_OR_NEWER || UNITY_2022_3_OR_NEWER || UNITY_2023_1_OR_NEWER
+#if UNITY_2022_1_OR_NEWER
             return (LifetimeScope)FindAnyObjectByType(type);
 #else
             return (LifetimeScope)FindObjectOfType(type);
@@ -217,7 +220,7 @@ namespace VContainer.Unity
             AwakeWaitingChildren(this);
         }
 
-        private void SetContainer(IObjectResolver container)
+        void SetContainer(IObjectResolver container)
         {
             Container = container;
             AutoInjectAll();
@@ -304,12 +307,24 @@ namespace VContainer.Unity
             EntryPointsBuilder.EnsureDispatcherRegistered(builder);
         }
 
+        protected virtual LifetimeScope FindParent() => null;
+
         LifetimeScope GetRuntimeParent()
         {
             if (IsRoot) return null;
 
             if (parentReference.Object != null)
                 return parentReference.Object;
+            
+            // Find via implementation
+            var implParent = FindParent();
+            if (implParent != null)
+            {
+                if (parentReference.Type != null && parentReference.Type != implParent.GetType()) {
+                    UnityEngine.Debug.LogWarning($"FindParent returned {implParent.GetType()} but parent reference type is {parentReference.Type}. This may be unintentional.");
+                }
+                return implParent;
+            }
 
             // Find in scene via type
             if (parentReference.Type != null && parentReference.Type != GetType())
